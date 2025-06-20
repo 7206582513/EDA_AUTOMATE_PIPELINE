@@ -766,7 +766,7 @@ elif page == "💬 AI Chat Assistant":
     if not st.session_state.groq_api_key:
         st.warning("⚠️ Please enter your Groq API key in the sidebar to use the AI assistant.")
         st.info("Get your API key from: https://console.groq.com/keys")
-        return
+    else:
     
     # Chat interface
     st.markdown("### 🤖 Chat with Your AI Data Science Assistant")
@@ -896,3 +896,4 @@ st.markdown("""
     <p>For support or questions, please refer to the documentation.</p>
 </div>
 """, unsafe_allow_html=True)
+
