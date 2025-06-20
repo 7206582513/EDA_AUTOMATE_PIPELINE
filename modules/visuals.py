@@ -15,12 +15,16 @@ import json
 class CNNChartClassifier:
     """Enhanced CNN-based chart type classifier"""
 
-    def _init_(self):
+    def __init__(self):
         self.model = None
         self.classes = ['bar', 'line', 'pie', 'scatter', 'histogram', 'box', 'area']
         self.confidence_threshold = 0.7
         self._build_model()
-        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+        # Configure tesseract path (may need adjustment based on system)
+        try:
+            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\	esseract.exe'
+        except:
+            pass  # Use system default
 
     def _build_model(self):
         """Build CNN model with transfer learning"""
@@ -150,7 +154,7 @@ class CNNChartClassifier:
 class EnhancedImageProcessor:
     """Enhanced image processing for data extraction"""
 
-    def _init_(self):
+    def __init__(self):
         self.ocr_config = '--oem 3 --psm 6'
 
     def extract_chart_regions(self, image: np.ndarray) -> List[np.ndarray]:
@@ -212,23 +216,28 @@ class EnhancedImageProcessor:
 
     def _extract_text_ocr(self, image: np.ndarray) -> List[str]:
         """Extract text using OCR"""
-        # Preprocess image for better OCR
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        try:
+            # Preprocess image for better OCR
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-        # Apply denoising
-        denoised = cv2.fastNlMeansDenoising(gray)
+            # Apply denoising
+            denoised = cv2.fastNlMeansDenoising(gray)
 
-        # Enhance contrast
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(denoised)
+            # Enhance contrast
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced = clahe.apply(denoised)
 
-        # Extract text
-        text = pytesseract.image_to_string(enhanced, config=self.ocr_config)
+            # Extract text
+            text = pytesseract.image_to_string(enhanced, config=self.ocr_config)
 
-        # Clean and split text
-        lines = [line.strip() for line in text.split('\n') if line.strip()]
+            # Clean and split text
+            lines = [line.strip() for line in text.split('\
+') if line.strip()]
 
-        return lines
+            return lines
+        except Exception as e:
+            print(f"OCR extraction failed: {e}")
+            return []
 
     def _extract_bar_data(self, image: np.ndarray) -> Dict[str, Any]:
         """Extract data from bar charts"""
@@ -271,7 +280,7 @@ class EnhancedImageProcessor:
                 line_data.append({
                     "start": (int(x1), int(y1)),
                     "end": (int(x2), int(y2)),
-                    "length": int(np.sqrt((x2 - x1) * 2 + (y2 - y1) * 2))
+                    "length": int(np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2))
                 })
 
         return {
