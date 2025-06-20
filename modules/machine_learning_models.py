@@ -36,10 +36,10 @@ warnings.filterwarnings('ignore')
 class EnhancedMLPipeline:
     """Enhanced ML pipeline with advanced algorithms and hyperparameter tuning"""
 
-    def _init_(self):
+    def __init__(self):
         print("[INFO] Initializing directories...")
-        self.charts_dir = "../ML/static/charts"
-        self.models_dir = "../ML/outputs"
+        self.charts_dir = "static/charts"
+        self.models_dir = "static/models"
         os.makedirs(self.charts_dir, exist_ok=True)
         os.makedirs(self.models_dir, exist_ok=True)
         print(f"[SUCCESS] Directories created or already exist: {self.charts_dir}, {self.models_dir}")
