@@ -10,7 +10,7 @@ import pandas as pd
 class IntelligentChatEngine:
     """Enhanced chat engine with context awareness and memory"""
 
-    def _init_(self, api_key: str, api_url: str, model: str):
+    def __init__(self, api_key: str, api_url: str, model: str):
         self.api_key = api_key
         self.api_url = api_url
         self.model = model
