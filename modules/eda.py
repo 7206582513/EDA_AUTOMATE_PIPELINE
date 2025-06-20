@@ -1,455 +1,637 @@
 import pandas as pd
 import numpy as np
-import pickle
-import os
-from typing import Dict, Any, Tuple
-from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
-import logging
-# ML imports
-from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
-from sklearn.metrics import (
-    accuracy_score, f1_score, precision_score, recall_score,
-    classification_report, confusion_matrix, roc_auc_score,
-    r2_score, mean_squared_error, mean_absolute_error
-)
-from sklearn.ensemble import (
-    RandomForestClassifier, RandomForestRegressor,
-    GradientBoostingClassifier, GradientBoostingRegressor,
-    VotingClassifier, VotingRegressor
-)
-from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge, Lasso
-from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.svm import SVC, SVR
-from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
-from sklearn.naive_bayes import GaussianNB
-from imblearn.over_sampling import SMOTE, RandomOverSampler
-from imblearn.under_sampling import RandomUnderSampler
-from xgboost import XGBClassifier, XGBRegressor
-import lightgbm as lgb
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.impute import KNNImputer
+from sklearn.feature_selection import chi2, f_classif
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import plotly.io as pio
+from typing import Dict, Any, Tuple, List
+import os
 import warnings
+import logging
 
 warnings.filterwarnings('ignore')
 
 
-class EnhancedMLPipeline:
-    """Enhanced ML pipeline with advanced algorithms and hyperparameter tuning"""
+class AutoEDAPipeline:
+    """Enhanced Automated EDA Pipeline with advanced visualizations"""
 
-    def __init__(self):
-        print("[INFO] Initializing directories...")
-        self.charts_dir = "../ML/static/charts"
-        self.models_dir = "../ML/outputs"
+    def _init_(self):
+        self.charts_dir = "static/charts"
         os.makedirs(self.charts_dir, exist_ok=True)
-        os.makedirs(self.models_dir, exist_ok=True)
-        print(f"[SUCCESS] Directories created or already exist: {self.charts_dir}, {self.models_dir}")
+        self.knn_neighbors = 5
+        self.iqr_factor = 1.5
 
-        print("[INFO] Initializing Classification Models...")
-        self.classification_models = {
-            "Logistic Regression": {
-                "model": LogisticRegression(max_iter=1000),
-                "params": {
-                    "C": [0.1, 1, 10],
-                    "penalty": ["l1", "l2"],
-                    "solver": ["liblinear"]
-                }
-            },
-            "Random Forest": {
-                "model": RandomForestClassifier(random_state=42),
-                "params": {
-                    "n_estimators": [100, 200],
-                    "max_depth": [10, 20, None],
-                    "min_samples_split": [2, 5]
-                }
-            },
-            "XGBoost": {
-                "model": XGBClassifier(random_state=42, eval_metric='logloss'),
-                "params": {
-                    "n_estimators": [100, 200],
-                    "learning_rate": [0.1, 0.2],
-                    "max_depth": [3, 6]
-                }
-            },
-            "LightGBM": {
-                "model": lgb.LGBMClassifier(random_state=42, verbose=-1),
-                "params": {
-                    "n_estimators": [100, 200],
-                    "learning_rate": [0.1, 0.2],
-                    "max_depth": [3, 6]
-                }
-            },
-            "SVM": {
-                "model": SVC(probability=True, random_state=42),
-                "params": {
-                    "C": [0.1, 1, 10],
-                    "kernel": ["linear", "rbf"]
-                }
-            }
-        }
-        print("[SUCCESS] Classification models initialized.")
+    def run_analysis(self, df: pd.DataFrame, task_type: str, target_col: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        report = {}
+        logging.info("🔵 Starting EDA Pipeline...")
 
-        print("[INFO] Initializing Regression Models...")
-        self.regression_models = {
-            "Linear Regression": {
-                "model": LinearRegression(),
-                "params": {}
-            },
-            "Ridge Regression": {
-                "model": Ridge(),
-                "params": {
-                    "alpha": [0.1, 1, 10]
-                }
-            },
-            "Random Forest": {
-                "model": RandomForestRegressor(random_state=42),
-                "params": {
-                    "n_estimators": [100, 200],
-                    "max_depth": [10, 20, None]
-                }
-            },
-            "XGBoost": {
-                "model": XGBRegressor(random_state=42),
-                "params": {
-                    "n_estimators": [100, 200],
-                    "learning_rate": [0.1, 0.2],
-                    "max_depth": [3, 6]
-                }
-            },
-            "LightGBM": {
-                "model": lgb.LGBMRegressor(random_state=42, verbose=-1),
-                "params": {
-                    "n_estimators": [100, 200],
-                    "learning_rate": [0.1, 0.2],
-                    "max_depth": [3, 6]
-                }
-            }
-        }
-        print("[SUCCESS] Regression models initialized.")
-        print("[ALL DONE] ModelInitializer setup complete.")
+        # Normalize column names first for consistency
+        df.columns = df.columns.str.strip().str.replace(' ', '_', regex=False)
 
-    def _encode_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        df_encoded = df.copy()
+        # Normalize target column name too
+        target_col = target_col.strip().replace(' ', '_')
 
-        for col in df_encoded.select_dtypes(include=['object']).columns:
-            unique_values = df_encoded[col].nunique()
-
-            if unique_values <= 10:
-                # OneHotEncode low-cardinality features
-                dummies = pd.get_dummies(df_encoded[col], prefix=col, drop_first=True)
-                df_encoded = pd.concat([df_encoded.drop(columns=[col]), dummies], axis=1)
-            else:
-                # LabelEncode high-cardinality features
-                df_encoded[col] = df_encoded[col].astype('category').cat.codes
-
-        return df_encoded
-
-    def train_and_evaluate(self, df: pd.DataFrame, task_type: str, target_col: str) -> Dict[str, Any]:
-        """Enhanced training and evaluation pipeline with logging"""
-
-        print("🚀 Starting train_and_evaluate function...")
-        logging.info("🚀 Starting train_and_evaluate function...")
-
-        if target_col not in df.columns:
-            logging.error(f"❌ Target column '{target_col}' not found in dataset!")
-            raise ValueError(f"Target column '{target_col}' not found")
-
-        # Prepare data
-        logging.info("🔧 Splitting features and target...")
-        X = df.drop(columns=[target_col])
-        y = df[target_col]
-        X = self._encode_features(X)
-
-        # Split data
-        logging.info("🔧 Performing train-test split...")
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y if task_type == "classification" else None
-        )
-        logging.info(f"✅ Train shape: {X_train.shape}, Test shape: {X_test.shape}")
-
-        # Handle class imbalance for classification
-        if task_type == "classification":
-            logging.info("⚖️ Checking class imbalance...")
-            X_train, y_train = self._handle_imbalance(X_train, y_train)
-            logging.info(f"✅ After imbalance handling: Train shape: {X_train.shape}")
-
-        # Train and evaluate models
-        logging.info("⚙️ Starting model training...")
-        results = self._train_models(X_train, X_test, y_train, y_test, task_type)
-        logging.info("✅ Model training completed.")
-
-        # Create ensemble model
-        logging.info("🔀 Creating ensemble model...")
-        ensemble_results = self._create_ensemble(X_train, X_test, y_train, y_test, task_type, results)
-
-        # Safely handle empty ensemble (sometimes _create_ensemble may return {})
-        if ensemble_results:
-            results.update(ensemble_results)
-            logging.info("✅ Ensemble model created and added.")
-        else:
-            logging.warning("⚠️ No ensemble created (not enough models).")
-
-        # Generate comprehensive report
-        logging.info("📝 Generating final report...")
-        report = self._generate_comprehensive_report(results, task_type, df.shape)
-        logging.info("✅ Report generation completed. Training pipeline finished.")
-        print("✅ Report generation completed. Training pipeline finished.")
-
-        return report
-
-    def _handle_imbalance(self, X_train: pd.DataFrame, y_train: pd.Series) -> Tuple[pd.DataFrame, pd.Series]:
-        """Handle class imbalance using SMOTE or other techniques"""
-        class_counts = y_train.value_counts()
-        min_class_count = class_counts.min()
-
-        if len(class_counts) > 1 and class_counts.max() / min_class_count > 2:
-            try:
-                if min_class_count >= 6:
-                    sampler = SMOTE(k_neighbors=5, random_state=42)
-                elif min_class_count > 1:
-                    sampler = SMOTE(k_neighbors=min_class_count - 1, random_state=42)
-                else:
-                    sampler = RandomOverSampler(random_state=42)
-
-                X_resampled, y_resampled = sampler.fit_resample(X_train, y_train)
-                return pd.DataFrame(X_resampled, columns=X_train.columns), pd.Series(y_resampled)
-            except Exception as e:
-                print(f"Resampling failed: {e}, using original data")
-
-        return X_train, y_train
-
-    def _train_models(self, X_train, X_test, y_train, y_test, task_type: str) -> Dict[str, Any]:
-        """Train multiple models with hyperparameter tuning"""
-        models_config = self.classification_models if task_type == "classification" else self.regression_models
-        results = {}
-
-        for name, config in models_config.items():
-            try:
-                print(f"Training {name}...")
-
-                # Hyperparameter tuning if parameters are defined
-                if config["params"]:
-                    grid_search = GridSearchCV(
-                        config["model"],
-                        config["params"],
-                        cv=3,
-                        scoring='f1_macro' if task_type == "classification" else 'r2',
-                        n_jobs=-1
-                    )
-                    grid_search.fit(X_train, y_train)
-                    best_model = grid_search.best_estimator_
-                    best_params = grid_search.best_params_
-                else:
-                    best_model = config["model"]
-                    best_model.fit(X_train, y_train)
-                    best_params = {}
-
-                # Make predictions
-                y_pred = best_model.predict(X_test)
-
-                # Calculate metrics
-                if task_type == "classification":
-                    metrics = self._calculate_classification_metrics(y_test, y_pred, best_model, X_test)
-                else:
-                    metrics = self._calculate_regression_metrics(y_test, y_pred)
-
-                # Generate plots
-                plot_path = self._generate_model_plots(y_test, y_pred, name, task_type)
-
-                results[name] = {
-                    "model": best_model,
-                    "metrics": metrics,
-                    "best_params": best_params,
-                    "plot_path": plot_path
-                }
-
-            except Exception as e:
-                print(f"Training {name} failed: {e}")
-                results[name] = {"error": str(e)}
-
-        return results
-
-    def _calculate_classification_metrics(self, y_true, y_pred, model, X_test) -> Dict[str, float]:
-        """Calculate comprehensive classification metrics"""
-        metrics = {
-            "accuracy": accuracy_score(y_true, y_pred),
-            "f1_macro": f1_score(y_true, y_pred, average='macro'),
-            "f1_weighted": f1_score(y_true, y_pred, average='weighted'),
-            "precision_macro": precision_score(y_true, y_pred, average='macro'),
-            "recall_macro": recall_score(y_true, y_pred, average='macro')
-        }
-
-        # Add ROC AUC for binary classification
-        if len(np.unique(y_true)) == 2:
-            try:
-                y_prob = model.predict_proba(X_test)[:, 1]
-                metrics["roc_auc"] = roc_auc_score(y_true, y_prob)
-            except:
-                pass
-
-        return metrics
-
-    def _calculate_regression_metrics(self, y_true, y_pred) -> Dict[str, float]:
-        """Calculate comprehensive regression metrics"""
-        return {
-            "r2_score": r2_score(y_true, y_pred),
-            "mse": mean_squared_error(y_true, y_pred),
-            "rmse": np.sqrt(mean_squared_error(y_true, y_pred)),
-            "mae": mean_absolute_error(y_true, y_pred),
-            "mape": np.mean(np.abs((y_true - y_pred) / y_true)) * 100
-        }
-
-    def _generate_model_plots(self, y_true, y_pred, model_name: str, task_type: str) -> str:
-        """Generate visualization plots for model evaluation"""
-        plt.figure(figsize=(12, 8))
-
-        if task_type == "classification":
-            # Confusion Matrix
-            plt.subplot(2, 2, 1)
-            cm = confusion_matrix(y_true, y_pred)
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-            plt.title(f'Confusion Matrix - {model_name}')
-            plt.ylabel('True Label')
-            plt.xlabel('Predicted Label')
-
-            # Classification Report Heatmap
-            plt.subplot(2, 2, 2)
-            report = classification_report(y_true, y_pred, output_dict=True)
-            report_df = pd.DataFrame(report).iloc[:-1, :].T
-            sns.heatmap(report_df.iloc[:, :-1], annot=True, cmap='RdYlBu')
-            plt.title('Classification Report')
-
-        else:
-            # Actual vs Predicted
-            plt.subplot(2, 2, 1)
-            plt.scatter(y_true, y_pred, alpha=0.7)
-            plt.plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], 'r--', lw=2)
-            plt.xlabel('Actual Values')
-            plt.ylabel('Predicted Values')
-            plt.title(f'Actual vs Predicted - {model_name}')
-
-            # Residuals Plot
-            plt.subplot(2, 2, 2)
-            residuals = y_true - y_pred
-            plt.scatter(y_pred, residuals, alpha=0.7)
-            plt.axhline(y=0, color='r', linestyle='--')
-            plt.xlabel('Predicted Values')
-            plt.ylabel('Residuals')
-            plt.title('Residuals Plot')
-
-        plt.tight_layout()
-
-        plot_path = f"{self.charts_dir}/{model_name.replace(' ', '_').lower()}_evaluation.png"
-        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-        plt.close()
-
-        return plot_path
-
-    def _create_ensemble(self, X_train, X_test, y_train, y_test, task_type: str, results: Dict) -> Dict[str, Any]:
-        """Create ensemble model from best performing models"""
+        # Step 1: Data Quality Assessment
         try:
-            # Get top 3 models based on performance
-            if task_type == "classification":
-                valid_models = [(name, data) for name, data in results.items()
-                                if "model" in data and "metrics" in data]
-                valid_models.sort(key=lambda x: x[1]["metrics"]["f1_macro"], reverse=True)
-            else:
-                valid_models = [(name, data) for name, data in results.items()
-                                if "model" in data and "metrics" in data]
-                valid_models.sort(key=lambda x: x[1]["metrics"]["r2_score"], reverse=True)
+            report["data_quality"] = self._assess_data_quality(df)
+            logging.info("✅ Data quality assessment completed.")
+        except Exception as e:
+            logging.error(f"❌ Data quality assessment failed: {e}")
+            report["data_quality"] = {}
 
-            if len(valid_models) < 2:
-                return {}
+        # Step 2: Clean column names and remove unnecessary columns
+        try:
+            cleaned_df = self._clean_data(df, target_col)
+            report["cleaned_shape"] = cleaned_df.shape
+            logging.info("✅ Data cleaning completed.")
+        except Exception as e:
+            logging.error(f"❌ Data cleaning failed: {e}")
+            raise
 
-            # Create ensemble
-            top_models = valid_models[:3]
-            estimators = [(name, data["model"]) for name, data in top_models]
+        # Step 3: Feature Engineering
+        try:
+            engineered_df = self._engineer_features(cleaned_df, target_col, task_type)
+            logging.info("✅ Feature engineering completed.")
+        except Exception as e:
+            logging.error(f"❌ Feature engineering failed: {e}")
+            raise
 
-            if task_type == "classification":
-                ensemble = VotingClassifier(estimators=estimators, voting='soft')
-            else:
-                ensemble = VotingRegressor(estimators=estimators)
+        # Step 4: Statistical Analysis
+        try:
+            report["statistics"] = self._statistical_analysis(engineered_df, target_col, task_type)
+            logging.info("✅ Statistical analysis completed.")
+        except Exception as e:
+            logging.error(f"❌ Statistical analysis failed: {e}")
+            report["statistics"] = {}
 
-            # Train ensemble
-            ensemble.fit(X_train, y_train)
-            y_pred_ensemble = ensemble.predict(X_test)
+        # Step 5: Feature Importance
+        try:
+            report["feature_importance"] = self._analyze_feature_importance(engineered_df, target_col, task_type)
+            logging.info("✅ Feature importance analysis completed.")
+        except Exception as e:
+            logging.error(f"❌ Feature importance failed: {e}")
+            report["feature_importance"] = {}
 
-            # Calculate metrics
-            if task_type == "classification":
-                metrics = self._calculate_classification_metrics(y_test, y_pred_ensemble, ensemble, X_test)
-            else:
-                metrics = self._calculate_regression_metrics(y_test, y_pred_ensemble)
+        logging.info("🟢 EDA Pipeline successfully completed.")
+        return engineered_df, report
 
-            # Generate plots
-            plot_path = self._generate_model_plots(y_test, y_pred_ensemble, "Ensemble", task_type)
-
-            return {
-                "Ensemble": {
-                    "model": ensemble,
-                    "metrics": metrics,
-                    "plot_path": plot_path,
-                    "component_models": [name for name, _ in top_models]
-                }
+    def _assess_data_quality(self, df: pd.DataFrame) -> Dict[str, Any]:
+        logging.info("Assessing data quality...")
+        try:
+            quality_report = {
+                "shape": df.shape,
+                "memory_usage": df.memory_usage(deep=True).sum(),
+                "dtypes": df.dtypes.value_counts().to_dict(),
+                "missing_values": df.isnull().sum().to_dict(),
+                "missing_percentage": (df.isnull().sum() / len(df) * 100).round(2).to_dict(),
+                "duplicate_rows": df.duplicated().sum(),
+                "unique_values": {col: df[col].nunique() for col in df.columns},
+                "zero_values": (df == 0).sum().to_dict(),
+                "negative_values": (df.select_dtypes(include=[np.number]) < 0).sum().to_dict()
             }
 
+            # Identify potential issues
+            issues = []
+            for col in df.columns:
+                if quality_report["missing_percentage"][col] > 50:
+                    issues.append(f"High missing values in {col}: {quality_report['missing_percentage'][col]:.1f}%")
+
+                if df[col].dtype == 'object' and df[col].nunique() == len(df):
+                    issues.append(f"Potential ID column: {col}")
+
+            quality_report["potential_issues"] = issues
+
+            return quality_report
         except Exception as e:
-            print(f"Ensemble creation failed: {e}")
+            logging.error(f"Data quality assessment failed: {e}")
             return {}
 
-    def _generate_comprehensive_report(self, results: Dict[str, Any], task_type: str, dataset_shape: Tuple) -> Dict[
-        str, Any]:
-        """Generate comprehensive ML report"""
-        # Find best model
-        if task_type == "classification":
-            best_model_name = max(
-                [name for name, data in results.items() if "metrics" in data],
-                key=lambda x: results[x]["metrics"]["f1_macro"]
+    def _clean_data(self, df: pd.DataFrame, target_col: str) -> pd.DataFrame:
+        """Enhanced data cleaning with logging"""
+
+        logging.info("Starting data cleaning...")
+        cleaned_df = df.copy()
+
+        # Clean column names
+        cleaned_df.columns = cleaned_df.columns.str.strip().str.replace(' ', '_', regex=False)
+        logging.info(f"Column names cleaned. Total columns: {len(cleaned_df.columns)}")
+
+        # Remove ID-like columns but never remove target column
+        id_cols = [col for col in cleaned_df.columns
+                   if any(keyword in col.lower() for keyword in ['id', 'index', 'key']) and col != target_col]
+        cleaned_df = cleaned_df.drop(columns=id_cols, errors='ignore')
+        logging.info(f"Removed ID-like columns (except target): {id_cols}")
+
+        # Remove high-null columns (>60% missing)
+        high_null_cols = cleaned_df.columns[cleaned_df.isnull().mean() > 0.6].tolist()
+        cleaned_df = cleaned_df.drop(columns=high_null_cols)
+        logging.info(f"Removed high-null columns: {high_null_cols}")
+
+        # Convert string numbers to numeric where possible
+        for col in cleaned_df.select_dtypes(include=['object']).columns:
+            numeric_series = pd.to_numeric(cleaned_df[col], errors='coerce')
+            if numeric_series.notna().mean() > 0.7:
+                cleaned_df[col] = numeric_series
+                logging.info(f"Converted column '{col}' to numeric")
+
+        logging.info(f"Data cleaning completed. Remaining columns: {len(cleaned_df.columns)}")
+        return cleaned_df
+
+    def _engineer_features(self, df: pd.DataFrame, target_col: str, task_type: str) -> pd.DataFrame:
+        """Advanced feature engineering with logging and error handling"""
+
+        logging.info("🔵 Starting feature engineering...")
+
+        try:
+            if target_col not in df.columns:
+                raise ValueError(f"Target column '{target_col}' not found")
+            logging.info(f"Target column '{target_col}' found.")
+
+            engineered_df = df.copy()
+
+            # Separate features and target
+            y = engineered_df[target_col]
+            X = engineered_df.drop(columns=[target_col])
+            logging.info("✅ Target separated from features.")
+
+            # Step 1: KNN Imputation
+            try:
+                X_imputed = self._knn_impute(X)
+                logging.info("✅ KNN imputation completed.")
+            except Exception as e:
+                logging.error(f"❌ KNN imputation failed: {e}")
+                raise
+
+            # Step 2: Categorical Encoding
+            try:
+                X_encoded = self._encode_categorical(X_imputed)
+                logging.info("✅ Categorical encoding completed.")
+            except Exception as e:
+                logging.error(f"❌ Encoding failed: {e}")
+                raise
+
+            # Step 3: Scaling
+            try:
+                X_scaled = self._scale_features(X_encoded)
+                logging.info("✅ Feature scaling completed.")
+            except Exception as e:
+                logging.error(f"❌ Scaling failed: {e}")
+                raise
+
+            # Step 4: Target Encoding (classification only)
+            if task_type == "classification" and y.dtype == 'object':
+                try:
+                    y_encoded = LabelEncoder().fit_transform(y)
+                    y = pd.Series(y_encoded, index=y.index, name=target_col)
+                    logging.info("✅ Target encoding (classification) completed.")
+                except Exception as e:
+                    logging.error(f"❌ Target encoding failed: {e}")
+                    raise
+
+            # Step 5: Outlier Removal
+            try:
+                X_clean, y_clean = self._remove_outliers(X_scaled, y)
+                logging.info("✅ Outlier removal completed.")
+            except Exception as e:
+                logging.error(f"❌ Outlier removal failed: {e}")
+                raise
+
+            final_df = pd.concat([X_clean, y_clean], axis=1)
+            logging.info("🟢 Feature engineering fully completed.")
+            return final_df.dropna()
+
+        except Exception as e:
+            logging.error(f"❌ Full feature engineering failed: {e}")
+            raise
+
+    def _knn_impute(self, df: pd.DataFrame) -> pd.DataFrame:
+        """KNN imputation for missing values with logging and error handling"""
+
+        logging.info("🔵 Starting KNN imputation...")
+
+        try:
+            cat_cols = df.select_dtypes(include=['object']).columns.tolist()
+            df_temp = df.copy()
+
+            encoders = {}
+
+            # Step 1: Encoding categorical columns before imputation
+            try:
+                for col in cat_cols:
+                    encoder = LabelEncoder()
+                    df_temp[col] = encoder.fit_transform(df_temp[col].astype(str))
+                    encoders[col] = encoder
+                logging.info(f"✅ Encoded categorical columns for KNN imputation: {cat_cols}")
+            except Exception as e:
+                logging.error(f"❌ Encoding before KNN imputation failed: {e}")
+                raise
+
+            # Step 2: Apply KNN imputation
+            try:
+                imputer = KNNImputer(n_neighbors=self.knn_neighbors)
+                df_imputed = pd.DataFrame(
+                    imputer.fit_transform(df_temp),
+                    columns=df_temp.columns,
+                    index=df_temp.index
+                )
+                logging.info("✅ KNN imputation completed.")
+            except Exception as e:
+                logging.error(f"❌ KNN imputation failed: {e}")
+                raise
+
+            # Step 3: Decode categorical columns back to original labels
+            try:
+                for col in cat_cols:
+                    df_imputed[col] = df_imputed[col].round().astype(int)
+                    df_imputed[col] = encoders[col].inverse_transform(df_imputed[col])
+                logging.info(f"✅ Decoded categorical columns back to original labels: {cat_cols}")
+            except Exception as e:
+                logging.error(f"❌ Decoding categorical columns after KNN failed: {e}")
+                raise
+
+            logging.info("🟢 KNN imputation fully completed.")
+            return df_imputed
+
+        except Exception as e:
+            logging.error(f"❌ Full KNN imputation failed: {e}")
+            raise
+
+    def _encode_categorical(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Enhanced categorical encoding with logging and error handling"""
+
+        logging.info("🔵 Starting categorical encoding...")
+
+        try:
+            encoded_df = df.copy()
+
+            cat_cols = df.select_dtypes(include=['object']).columns.tolist()
+            logging.info(f"Found categorical columns: {cat_cols}")
+
+            for col in cat_cols:
+                try:
+                    unique_count = df[col].nunique()
+                    logging.info(f"Encoding column '{col}' with {unique_count} unique values")
+
+                    if unique_count <= 10:
+                        # One-hot encoding for low cardinality
+                        dummies = pd.get_dummies(df[col], prefix=col, drop_first=True)
+                        encoded_df = pd.concat([encoded_df.drop(col, axis=1), dummies], axis=1)
+                        logging.info(f"✅ One-hot encoded column: {col}")
+                    else:
+                        # Label encoding for high cardinality
+                        encoded_df[col] = LabelEncoder().fit_transform(df[col])
+                        logging.info(f"✅ Label encoded column: {col}")
+
+                except Exception as e:
+                    logging.error(f"❌ Encoding failed for column '{col}': {e}")
+                    raise
+
+            logging.info("🟢 Categorical encoding fully completed.")
+            return encoded_df
+
+        except Exception as e:
+            logging.error(f"❌ Full categorical encoding failed: {e}")
+            raise
+
+    def _scale_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Feature scaling with logging and error handling"""
+
+        logging.info("🔵 Starting feature scaling...")
+
+        try:
+            scaler = StandardScaler()
+            scaled_array = scaler.fit_transform(df)
+            scaled_df = pd.DataFrame(scaled_array, columns=df.columns, index=df.index)
+            logging.info("🟢 Feature scaling completed successfully.")
+            return scaled_df
+
+        except Exception as e:
+            logging.error(f"❌ Feature scaling failed: {e}")
+            raise
+
+    def _remove_outliers(self, X: pd.DataFrame, y: pd.Series) -> Tuple[pd.DataFrame, pd.Series]:
+        """IQR-based outlier removal with logging and error handling"""
+
+        logging.info("🔵 Starting outlier removal...")
+
+        try:
+            Q1 = X.quantile(0.25)
+            Q3 = X.quantile(0.75)
+            IQR = Q3 - Q1
+
+            lower_bound = Q1 - self.iqr_factor * IQR
+            upper_bound = Q3 + self.iqr_factor * IQR
+
+            outlier_mask = ~((X < lower_bound) | (X > upper_bound)).any(axis=1)
+
+            outliers_removed = (~outlier_mask).sum()
+            logging.info(f"✅ Outlier removal completed. Total rows removed: {outliers_removed}")
+
+            return X[outlier_mask], y[outlier_mask]
+
+        except Exception as e:
+            logging.error(f"❌ Outlier removal failed: {e}")
+            return X, y  # fail-safe return original data
+
+    async def _generate_visualizations(self, df: pd.DataFrame, target_col: str, task_type: str) -> Dict[str, str]:
+        """Generate comprehensive visualizations with logging and error handling"""
+
+        logging.info("🔵 Starting visualization generation...")
+        visualizations = {}
+
+        # Target distribution
+        try:
+            target_dist_path = await self._plot_target_distribution(df[target_col], task_type)
+            visualizations["target_distribution"] = target_dist_path
+            logging.info("✅ Target distribution plot generated.")
+        except Exception as e:
+            logging.error(f"❌ Target distribution plot failed: {e}")
+
+        # Correlation heatmap
+        try:
+            corr_path = await self._plot_correlation_heatmap(df)
+            visualizations["correlation_heatmap"] = corr_path
+            logging.info("✅ Correlation heatmap generated.")
+        except Exception as e:
+            logging.error(f"❌ Correlation heatmap failed: {e}")
+
+        # Feature distributions
+        try:
+            feat_dist_path = await self._plot_feature_distributions(df, target_col)
+            visualizations["feature_distributions"] = feat_dist_path
+            logging.info("✅ Feature distributions plot generated.")
+        except Exception as e:
+            logging.error(f"❌ Feature distributions plot failed: {e}")
+
+        # Pairplot for key features
+        try:
+            pairplot_path = await self._plot_pairplot(df, target_col, task_type)
+            visualizations["pairplot"] = pairplot_path
+            logging.info("✅ Pairplot generated.")
+        except Exception as e:
+            logging.error(f"❌ Pairplot failed: {e}")
+
+        # Box plots for outlier detection
+        try:
+            boxplot_path = await self._plot_outlier_detection(df, target_col)
+            visualizations["outlier_detection"] = boxplot_path
+            logging.info("✅ Outlier detection boxplots generated.")
+        except Exception as e:
+            logging.error(f"❌ Outlier detection plot failed: {e}")
+
+        logging.info("🟢 Visualization generation fully completed.")
+        return visualizations
+
+    async def _plot_target_distribution(self, target: pd.Series, task_type: str) -> str:
+        """Plot target variable distribution with logging and error handling"""
+
+        logging.info("🔵 Generating target distribution plot...")
+
+        try:
+            plt.figure(figsize=(10, 6))
+
+            if task_type == "classification":
+                target.value_counts().plot(kind='bar')
+                plt.title('Target Variable Distribution (Classification)')
+                plt.ylabel('Count')
+            else:
+                plt.hist(target, bins=30, alpha=0.7, edgecolor='black')
+                plt.title('Target Variable Distribution (Regression)')
+                plt.ylabel('Frequency')
+
+            plt.xlabel('Target Value')
+            plt.tight_layout()
+
+            path = f"{self.charts_dir}/target_distribution.png"
+            plt.savefig(path, dpi=300, bbox_inches='tight')
+            plt.close()
+
+            logging.info(f"✅ Target distribution plot saved at {path}")
+            return path
+
+        except Exception as e:
+            logging.error(f"❌ Target distribution plot generation failed: {e}")
+            return ""
+
+    async def _plot_correlation_heatmap(self, df: pd.DataFrame) -> str:
+        """Plot correlation heatmap with logging and error handling"""
+
+        logging.info("🔵 Generating correlation heatmap...")
+
+        try:
+            plt.figure(figsize=(12, 10))
+
+            corr_matrix = df.select_dtypes(include=[np.number]).corr()
+
+            sns.heatmap(
+                corr_matrix,
+                annot=True,
+                cmap='coolwarm',
+                center=0,
+                square=True,
+                fmt='.2f'
             )
-            primary_metric = "f1_macro"
-        else:
-            best_model_name = max(
-                [name for name, data in results.items() if "metrics" in data],
-                key=lambda x: results[x]["metrics"]["r2_score"]
-            )
-            primary_metric = "r2_score"
 
-        # Save best model
-        best_model = results[best_model_name]["model"]
-        model_path = f"{self.models_dir}/best_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
-        with open(model_path, 'wb') as f:
-            pickle.dump(best_model, f)
+            plt.title('Feature Correlation Heatmap')
+            plt.tight_layout()
 
-        # Create comparison table
-        comparison_table = []
-        for name, data in results.items():
-            if "metrics" in data:
-                row = {"Model": name}
-                row.update(data["metrics"])
-                if "plot_path" in data:
-                    row["Visualization"] = data["plot_path"]
-                comparison_table.append(row)
+            path = f"{self.charts_dir}/correlation_heatmap.png"
+            plt.savefig(path, dpi=300, bbox_inches='tight')
+            plt.close()
 
-        # Feature importance (for tree-based models)
-        feature_importance = {}
-        if hasattr(best_model, 'feature_importances_'):
-            feature_importance = dict(zip(
-                [f"feature_{i}" for i in range(len(best_model.feature_importances_))],
-                best_model.feature_importances_
-            ))
+            logging.info(f"✅ Correlation heatmap saved at {path}")
+            return path
 
-        return {
-            "task_type": task_type,
-            "dataset_shape": dataset_shape,
-            "best_model": {
-                "name": best_model_name,
-                "metrics": results[best_model_name]["metrics"],
-                "primary_score": results[best_model_name]["metrics"][primary_metric],
-                "model_path": model_path
-            },
-            "comparison_table": comparison_table,
-            "feature_importance": feature_importance,
-            "total_models_trained": len([r for r in results.values() if "metrics" in r]),
-            "training_summary": {
-                "successful_models": len([r for r in results.values() if "metrics" in r]),
-                "failed_models": len([r for r in results.values() if "error" in r])
-            }
-        }
+        except Exception as e:
+            logging.error(f"❌ Correlation heatmap generation failed: {e}")
+            return ""
+
+    async def _plot_feature_distributions(self, df: pd.DataFrame, target_col: str) -> str:
+        """Plot feature distributions with logging and error handling"""
+
+        logging.info("🔵 Generating feature distributions...")
+
+        try:
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            numeric_cols = [col for col in numeric_cols if col != target_col]
+
+            n_features = min(len(numeric_cols), 9)  # Limit to 9 features
+            cols = 3
+            rows = (n_features + cols - 1) // cols
+
+            plt.figure(figsize=(15, 5 * rows))
+
+            for i, col in enumerate(numeric_cols[:n_features]):
+                plt.subplot(rows, cols, i + 1)
+                plt.hist(df[col], bins=30, alpha=0.7, edgecolor='black')
+                plt.title(f'Distribution of {col}')
+                plt.xlabel(col)
+                plt.ylabel('Frequency')
+
+            plt.tight_layout()
+
+            path = f"{self.charts_dir}/feature_distributions.png"
+            plt.savefig(path, dpi=300, bbox_inches='tight')
+            plt.close()
+
+            logging.info(f"✅ Feature distributions saved at {path}")
+            return path
+
+        except Exception as e:
+            logging.error(f"❌ Feature distributions generation failed: {e}")
+            return ""
+
+    async def _plot_pairplot(self, df: pd.DataFrame, target_col: str, task_type: str) -> str:
+        """Plot pairplot for key features with logging and error handling"""
+
+        logging.info("🔵 Generating pairplot...")
+
+        try:
+            numeric_df = df.select_dtypes(include=[np.number])
+
+            if target_col in numeric_df.columns:
+                correlations = numeric_df.corr()[target_col].abs().sort_values(ascending=False)
+                top_features = correlations.head(6).index.tolist()  # Include target
+
+                subset_df = df[top_features]
+
+                plt.figure(figsize=(12, 10))
+
+                if task_type == "classification":
+                    sns.pairplot(subset_df, hue=target_col, diag_kind='hist')
+                else:
+                    sns.pairplot(subset_df, diag_kind='hist')
+
+                plt.suptitle('Pairplot of Top Correlated Features', y=1.02)
+
+                path = f"{self.charts_dir}/pairplot.png"
+                plt.savefig(path, dpi=300, bbox_inches='tight')
+                plt.close()
+
+                logging.info(f"✅ Pairplot saved at {path}")
+                return path
+
+            else:
+                logging.warning("⚠️ Target column not found in numeric features — skipping pairplot.")
+                return ""
+
+        except Exception as e:
+            logging.error(f"❌ Pairplot generation failed: {e}")
+            return ""
+
+    async def _plot_outlier_detection(self, df: pd.DataFrame, target_col: str) -> str:
+        """Plot box plots for outlier detection with logging and error handling"""
+
+        logging.info("🔵 Generating outlier detection boxplots...")
+
+        try:
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            numeric_cols = [col for col in numeric_cols if col != target_col]
+
+            n_features = min(len(numeric_cols), 6)
+            cols = 3
+            rows = (n_features + cols - 1) // cols
+
+            plt.figure(figsize=(15, 5 * rows))
+
+            for i, col in enumerate(numeric_cols[:n_features]):
+                plt.subplot(rows, cols, i + 1)
+                plt.boxplot(df[col].dropna())
+                plt.title(f'Box Plot - {col}')
+                plt.ylabel(col)
+
+            plt.tight_layout()
+
+            path = f"{self.charts_dir}/outlier_detection.png"
+            plt.savefig(path, dpi=300, bbox_inches='tight')
+            plt.close()
+
+            logging.info(f"✅ Outlier detection boxplots saved at {path}")
+            return path
+
+        except Exception as e:
+            logging.error(f"❌ Outlier detection boxplot generation failed: {e}")
+            return ""
+
+    def _statistical_analysis(self, df: pd.DataFrame, target_col: str, task_type: str) -> Dict[str, Any]:
+        """Comprehensive statistical analysis with logging and error handling"""
+
+        logging.info("🔵 Starting statistical analysis...")
+
+        try:
+            stats = {}
+
+            # Basic statistics
+            stats["descriptive"] = df.describe().to_dict()
+            logging.info("✅ Descriptive statistics generated.")
+
+            if target_col in df.columns:
+                target = df[target_col]
+
+                if task_type == "classification":
+                    stats["target"] = {
+                        "unique_classes": int(target.nunique()),
+                        "class_distribution": target.value_counts().to_dict(),
+                        "class_balance": target.value_counts(normalize=True).to_dict()
+                    }
+                    logging.info("✅ Target analysis (classification) generated.")
+                else:
+                    stats["target"] = {
+                        "mean": float(target.mean()),
+                        "median": float(target.median()),
+                        "std": float(target.std()),
+                        "skewness": float(target.skew()),
+                        "kurtosis": float(target.kurtosis())
+                    }
+                    logging.info("✅ Target analysis (regression) generated.")
+            else:
+                logging.warning(f"⚠️ Target column '{target_col}' not found in dataset.")
+
+            logging.info("🟢 Statistical analysis fully completed.")
+            return stats
+
+        except Exception as e:
+            logging.error(f"❌ Statistical analysis failed: {e}")
+            return {}
+
+    def _analyze_feature_importance(self, df: pd.DataFrame, target_col: str, task_type: str) -> Dict[str, Any]:
+        """Analyze feature importance using statistical tests with logging and error handling"""
+
+        logging.info("🔵 Starting feature importance analysis...")
+
+        try:
+            if target_col not in df.columns:
+                logging.warning(f"⚠️ Target column '{target_col}' not found for feature importance.")
+                return {}
+
+            X = df.drop(columns=[target_col])
+            y = df[target_col]
+
+            importance_scores = {}
+
+            if task_type == "classification":
+                scores, p_values = chi2(X, y)
+                logging.info("✅ Chi-Square test applied for classification task.")
+            else:
+                scores, p_values = f_classif(X, y)
+                logging.info("✅ F-test applied for regression task.")
+
+            for i, col in enumerate(X.columns):
+                importance_scores[col] = {
+                    "score": float(scores[i]),
+                    "p_value": float(p_values[i]),
+                    "significant": p_values[i] < 0.05
+                }
+
+            logging.info("🟢 Feature importance analysis completed.")
+            return importance_scores
+
+        except Exception as e:
+            logging.error(f"❌ Feature importance analysis failed: {e}")
+            return {}
